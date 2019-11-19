@@ -122,7 +122,7 @@ class cg {
                   AMGCL_PARAMS_IMPORT_VALUE(p, abstol),
                   AMGCL_PARAMS_IMPORT_VALUE(p, project_out_constant_nullspace)
             {
-                check_params(p, {"maxiter", "tol", "abstol, project_out_constant_nullspace"});
+                check_params(p, {"maxiter", "tol", "abstol", "project_out_constant_nullspace"});
                 #ifdef USE_MPI
                 MPI_Comm_size(MPI_COMM_WORLD, &world_size);
                 MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
