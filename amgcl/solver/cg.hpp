@@ -31,10 +31,17 @@ THE SOFTWARE.
  * \brief  Conjugate Gradient method.
  */
 
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
+
 #include <tuple>
 #include <amgcl/backend/interface.hpp>
+#include <amgcl/backend/vexcl.hpp>
 #include <amgcl/solver/detail/default_inner_product.hpp>
 #include <amgcl/util.hpp>
+
+#include <vexcl/vector.hpp>
 
 namespace amgcl {
 
@@ -78,6 +85,10 @@ class cg {
 
         /// Solver parameters.
         struct params {
+            int world_size;
+
+            int world_rank;
+
             /// Maximum number of iterations.
             size_t maxiter;
 
@@ -87,24 +98,45 @@ class cg {
             /// Target absolute residual error.
             scalar_type abstol;
 
+            /// Whether to project out constant nullspace on each iteration
+            bool project_out_constant_nullspace;
+
             params()
                 : maxiter(100), tol(1e-8),
-                  abstol(std::numeric_limits<scalar_type>::min())
-            {}
+                  abstol(std::numeric_limits<scalar_type>::min()),
+                  project_out_constant_nullspace(false)
+            {
+                #ifdef USE_MPI
+                MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+                MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+                #else
+                world_size = 1;
+                world_rank = 0;
+                #endif
+            }
 
 #ifndef AMGCL_NO_BOOST
             params(const boost::property_tree::ptree &p)
                 : AMGCL_PARAMS_IMPORT_VALUE(p, maxiter),
                   AMGCL_PARAMS_IMPORT_VALUE(p, tol),
-                  AMGCL_PARAMS_IMPORT_VALUE(p, abstol)
+                  AMGCL_PARAMS_IMPORT_VALUE(p, abstol),
+                  AMGCL_PARAMS_IMPORT_VALUE(p, project_out_constant_nullspace)
             {
-                check_params(p, {"maxiter", "tol", "abstol"});
+                check_params(p, {"maxiter", "tol", "abstol, project_out_constant_nullspace"});
+                #ifdef USE_MPI
+                MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+                MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+                #else
+                world_size = 1;
+                world_rank = 0;
+                #endif
             }
 
             void get(boost::property_tree::ptree &p, const std::string &path) const {
                 AMGCL_PARAMS_EXPORT_VALUE(p, path, maxiter);
                 AMGCL_PARAMS_EXPORT_VALUE(p, path, tol);
                 AMGCL_PARAMS_EXPORT_VALUE(p, path, abstol);
+                AMGCL_PARAMS_EXPORT_VALUE(p, path, project_out_constant_nullspace);
             }
 #endif
         };
@@ -149,14 +181,19 @@ class cg {
                 return std::make_tuple(0, norm_rhs);
             }
 
-            scalar_type eps  = std::max(prm.tol * norm_rhs, prm.abstol);
+            scalar_type eps = std::max(prm.tol * norm_rhs, prm.abstol);
 
             coef_type rho1 = 2 * eps * one;
             coef_type rho2 = zero;
             scalar_type res_norm = norm(*r);
 
+            //for(size_t i=0;i<rhs.size();++i) std::cout<<"rhs["<<i<<"]="<<rhs[i]<<std::endl;
+            //for(size_t i=0;i<x.size();++i) std::cout<<"x["<<i<<"]="<<x[i]<<std::endl;
+            //std::cout<<"begin cg iters, res norm = "<<res_norm<<", n = "<<n<<std::endl;
+            //std::cout<<(*(A.local())).ptr[0]<<std::endl;
             size_t iter = 0;
             for(; iter < prm.maxiter && math::norm(res_norm) > eps; ++iter) {
+                //std::cout<<P<<std::endl;
                 P.apply(*r, *s);
 
                 rho2 = rho1;
@@ -171,11 +208,35 @@ class cg {
 
                 coef_type alpha = rho1 / inner_product(*q, *p);
 
+                //std::cout<<"alpha = "<<alpha<<", rho1 = "<<rho1<<", rho2 = "<<rho2<<", ip = "<<inner_product(*q, *p)<<std::endl;
+
                 backend::axpby( alpha, *p, one,  x);
+
+                if(prm.project_out_constant_nullspace) {
+                    vex::Reductor<double, vex::SUM> sum(x.queue_list());
+                    std::vector<double> means(prm.world_size);
+                    means[prm.world_rank] = sum(x);
+                    #ifdef USE_MPI
+                    for(int i=0;i<prm.world_size;++i){
+                        if(i!=prm.world_rank){
+           		    		MPI_Recv(&(means[i]), 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                        }else{
+                            for(int j=0;j<prm.world_size;++j)
+                                if(j!=prm.world_rank)
+            	    					MPI_Send(&(means[i]), 1, MPI_DOUBLE, j, 0, MPI_COMM_WORLD);
+                        }
+                    }
+                    #endif
+                    double global_sum = 0.; for(int i=0;i<prm.world_size;++i) global_sum += means[i];
+                    x -= global_sum / (prm.world_size*x.size());
+                }
+
                 backend::axpby(-alpha, *q, one, *r);
 
                 res_norm = norm(*r);
+                //std::cout<<"new res norm = "<<res_norm<<std::endl;
             }
+            //for(size_t i=0;i<x.size();++i) std::cout<<"x["<<i<<"]="<<x[i]<<std::endl;
 
             return std::make_tuple(iter, res_norm / norm_rhs);
         }
