@@ -453,10 +453,8 @@ class distributed_matrix {
             }
 
             if (!A_rem) {
-                if (loc_cols() != glob_cols()) {
-                    C->renumber(a_rem->nnz, a_rem->col);
-                    A_rem = Backend::copy_matrix(a_rem, bprm);
-                }
+                C->renumber(a_rem->nnz, a_rem->col);
+                A_rem = Backend::copy_matrix(a_rem, bprm);
             }
 
             C->move_to_backend(bprm);
