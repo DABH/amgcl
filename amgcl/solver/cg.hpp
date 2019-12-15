@@ -37,11 +37,17 @@ THE SOFTWARE.
 
 #include <tuple>
 #include <amgcl/backend/interface.hpp>
+
+#ifdef USE_CUDA
 #include <amgcl/backend/vexcl.hpp>
+#endif
+
 #include <amgcl/solver/detail/default_inner_product.hpp>
 #include <amgcl/util.hpp>
 
+#ifdef USE_CUDA
 #include <vexcl/vector.hpp>
+#endif
 
 namespace amgcl {
 
@@ -212,6 +218,7 @@ class cg {
 
                 backend::axpby( alpha, *p, one,  x);
 
+                #ifdef USE_CUDA
                 if(prm.project_out_constant_nullspace) {
                     vex::Reductor<double, vex::SUM> sum(x.queue_list());
                     std::vector<double> means(prm.world_size);
@@ -230,6 +237,7 @@ class cg {
                     double global_sum = 0.; for(int i=0;i<prm.world_size;++i) global_sum += means[i];
                     x -= global_sum / (prm.world_size*x.size());
                 }
+                #endif
 
                 backend::axpby(-alpha, *q, one, *r);
 
