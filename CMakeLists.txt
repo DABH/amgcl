@@ -89,14 +89,6 @@ target_compile_definitions(amgcl INTERFACE
     )
 
 #----------------------------------------------------------------------------
-# Enable asynchronous setup?
-#----------------------------------------------------------------------------
-option(AMGCL_ASYNC_SETUP "Enable asynchronous AMG setup" ON)
-if (AMGCL_ASYNC_SETUP)
-    target_compile_definitions(amgcl INTERFACE AMGCL_ASYNC_SETUP)
-endif()
-
-#----------------------------------------------------------------------------
 # Eigen backend
 #----------------------------------------------------------------------------
 find_path(EIGEN_INCLUDE Eigen/SparseCore PATH_SUFFIXES eigen3)
@@ -144,6 +136,7 @@ if (VIENNACL_INCLUDE)
         target_compile_options(viennacl_target INTERFACE
             $<$<CXX_COMPILER_ID:GNU>:-Wno-ignored-attributes>
             $<$<CXX_COMPILER_ID:GNU>:-Wno-deprecated-declarations>
+            $<$<CXX_COMPILER_ID:GNU>:-Wno-deprecated-copy>
             $<$<CXX_COMPILER_ID:Clang>:-Wno-ignored-attributes>
             $<$<CXX_COMPILER_ID:Clang>:-Wno-deprecated-declarations>
             )

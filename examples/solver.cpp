@@ -39,6 +39,7 @@
 
 #include <amgcl/relaxation/runtime.hpp>
 #include <amgcl/coarsening/runtime.hpp>
+#include <amgcl/coarsening/rigid_body_modes.hpp>
 #include <amgcl/solver/runtime.hpp>
 #include <amgcl/preconditioner/runtime.hpp>
 #include <amgcl/make_solver.hpp>
@@ -82,8 +83,6 @@ std::tuple<size_t, double> block_solve(
         amgcl::runtime::preconditioner<BBackend>,
         amgcl::runtime::solver::wrapper<BBackend>
         > Solver;
-
-    ;
 
     auto A = amgcl::adapter::block_matrix<value_type>(std::tie(rows, ptr, col, val));
 
@@ -402,6 +401,14 @@ int main(int argc, char *argv[]) {
          "Should only be provided together with a system matrix. "
         )
         (
+         "coords,C",
+         po::value<string>(),
+         "Coordinate matrix where number of rows corresponds to the number of grid nodes "
+         "and the number of columns corresponds to the problem dimensionality (2 or 3). "
+         "Will be used to construct near null-space vectors as rigid body modes. "
+         "Should only be provided together with a system matrix. "
+        )
+        (
          "binary,B",
          po::bool_switch()->default_value(false),
          "When specified, treat input files as binary instead of as MatrixMarket. "
@@ -453,8 +460,11 @@ int main(int argc, char *argv[]) {
         )
         ;
 
+    po::positional_options_description p;
+    p.add("prm", -1);
+
     po::variables_map vm;
-    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
     po::notify(vm);
 
     if (vm.count("help")) {
@@ -479,7 +489,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    size_t rows;
+    size_t rows, nv = 0;
     vector<ptrdiff_t> ptr, col;
     vector<double> val, rhs, null, x;
 
@@ -516,7 +526,7 @@ int main(int argc, char *argv[]) {
         if (vm.count("null")) {
             string nfile = vm["null"].as<string>();
 
-            size_t m, nv;
+            size_t m;
 
             if (binary) {
                 io::read_dense(nfile, m, nv, null);
@@ -525,7 +535,24 @@ int main(int argc, char *argv[]) {
             }
 
             precondition(m == rows, "Near null-space vectors have wrong size");
+        } else if (vm.count("coords")) {
+            string cfile = vm["coords"].as<string>();
+            std::vector<double> coo;
 
+            size_t m, ndim;
+
+            if (binary) {
+                io::read_dense(cfile, m, ndim, coo);
+            } else {
+                std::tie(m, ndim) = io::mm_reader(cfile)(coo);
+            }
+
+            precondition(m * ndim == rows && (ndim == 2 || ndim == 3), "Coordinate matrix has wrong size");
+
+            nv = amgcl::coarsening::rigid_body_modes(ndim, coo, null);
+        }
+
+        if (nv) {
             prm.put("precond.coarsening.nullspace.cols", nv);
             prm.put("precond.coarsening.nullspace.rows", rows);
             prm.put("precond.coarsening.nullspace.B",    &null[0]);
